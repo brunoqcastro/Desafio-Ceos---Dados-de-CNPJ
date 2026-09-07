@@ -2,12 +2,6 @@
 
 Ingestao e visualizacao dos dados publicos do CNPJ (Receita Federal).
 
-## Status
-
-- [x] Download automatico dos arquivos publicos
-- [x] Parsing e carga em banco de dados local (DuckDB)
-- [x] Interface web de consulta (Streamlit)
-
 ## Instalacao
 
 ```bash
