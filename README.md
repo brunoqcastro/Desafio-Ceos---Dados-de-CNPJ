@@ -6,7 +6,7 @@ Ingestao e visualizacao dos dados publicos do CNPJ (Receita Federal).
 
 - [x] Download automatico dos arquivos publicos
 - [x] Parsing e carga em banco de dados local (DuckDB)
-- [ ] Interface web de consulta
+- [x] Interface web de consulta (Streamlit)
 
 ## Instalacao
 
@@ -82,3 +82,25 @@ Observacoes sobre o schema:
   (`""`) como escape de aspas dentro de campos, sem cabecalho, em Latin-1 —
   o `etl.py` transcodifica para UTF-8 em streaming antes de rodar o `COPY`
   nativo do DuckDB (muito mais rapido que insercao linha a linha em Python).
+
+## Interface web
+
+```bash
+streamlit run src/app.py
+```
+
+Abre em `http://localhost:8501`. Duas abas:
+
+- **Visao geral**: contagens totais e graficos (estabelecimentos por UF,
+  situacao cadastral, top 10 CNAEs).
+- **Buscar empresas**: busca por razao social, nome fantasia ou CNPJ (aceita
+  CNPJ formatado ou so numeros, 8 digitos = raiz ou 14 digitos = CNPJ
+  completo), com filtros de UF, municipio, situacao cadastral e CNAE
+  principal na barra lateral. Ao selecionar uma empresa: dados cadastrais,
+  todos os estabelecimentos (matriz + filiais), socios, e uma aba extra de
+  **rede societaria** — grafo mostrando a empresa, seus socios e outras
+  empresas onde esses mesmos socios tambem aparecem.
+
+Codigos que a Receita documenta no layout mas nao distribui como arquivo
+(situacao cadastral, matriz/filial, porte, faixa etaria) estao mapeados em
+`src/lookups.py`.
