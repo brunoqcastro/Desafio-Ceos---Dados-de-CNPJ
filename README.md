@@ -5,7 +5,7 @@ Ingestao e visualizacao dos dados publicos do CNPJ (Receita Federal).
 ## Status
 
 - [x] Download automatico dos arquivos publicos
-- [ ] Parsing e carga em banco de dados local
+- [x] Parsing e carga em banco de dados local (DuckDB)
 - [ ] Interface web de consulta
 
 ## Instalacao
@@ -48,3 +48,37 @@ python src/download.py --month 2026-07
 
 Os arquivos vao para `data/raw/<mes>/`. O download suporta retomada (resume)
 caso seja interrompido — basta rodar o comando de novo.
+
+## Carga no banco de dados (DuckDB)
+
+Depois de baixados, os `.zip` sao parseados e carregados em uma base DuckDB
+local (`data/cnpj.duckdb`). O banco e escolhido porque le/agrega os arquivos
+CSV enormes da Receita com desempenho de banco colunar, sem precisar de um
+servidor rodando.
+
+```bash
+python src/etl.py
+```
+
+Isso detecta sozinho o mes mais recente em `data/raw/`, cria as tabelas
+(`empresas`, `estabelecimentos`, `socios`, `simples`, `cnaes`,
+`naturezas_juridicas`, `qualificacoes_socios`, `paises`, `municipios`,
+`motivos_situacao_cadastral`) e carrega todos os arquivos correspondentes.
+
+Carregar so algumas tabelas (util em testes, ou se voce so baixou parte dos
+arquivos com `--only` no passo anterior):
+
+```bash
+python src/etl.py --only cnaes municipios empresas
+```
+
+Observacoes sobre o schema:
+
+- Todas as colunas sao `VARCHAR`. Varios codigos da Receita (municipio, CNAE,
+  natureza juridica, DDD) tem zero a esquerda que se perderia como inteiro —
+  e manter tudo como texto evita que uma linha malformada no meio de um
+  arquivo de milhoes de linhas aborte a carga inteira.
+- Os arquivos csv dentro dos `.zip` sao `;`-separados, com aspas duplicadas
+  (`""`) como escape de aspas dentro de campos, sem cabecalho, em Latin-1 —
+  o `etl.py` transcodifica para UTF-8 em streaming antes de rodar o `COPY`
+  nativo do DuckDB (muito mais rapido que insercao linha a linha em Python).
