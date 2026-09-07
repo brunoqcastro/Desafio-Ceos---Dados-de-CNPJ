@@ -68,6 +68,18 @@ def format_money(raw: Optional[str]) -> str:
     return f"R$ {text}"
 
 
+def format_socios_preview(preview, total) -> str:
+    preview = clean(preview)
+    try:
+        total = int(total)
+    except (TypeError, ValueError):
+        total = 0
+    if not total:
+        return "-"
+    restantes = total - 3
+    return f"{preview} (+{restantes})" if restantes > 0 else preview
+
+
 def format_date(raw: Optional[str]) -> str:
     if not raw or raw == "0" or len(raw) != 8:
         return "-"
@@ -173,6 +185,7 @@ def search_estabelecimentos(
     municipio: Optional[str] = None,
     situacao: Optional[str] = None,
     cnae: Optional[str] = None,
+    socio: Optional[str] = None,
     limit: int = 200,
 ) -> pd.DataFrame:
     con = get_connection()
@@ -204,6 +217,12 @@ def search_estabelecimentos(
     if cnae:
         conditions.append("es.cnae_fiscal_principal = ?")
         params.append(cnae)
+    socio = (socio or "").strip()
+    if socio:
+        conditions.append(
+            "EXISTS (SELECT 1 FROM socios s WHERE s.cnpj_basico = es.cnpj_basico AND s.nome_socio ILIKE ?)"
+        )
+        params.append(f"%{socio}%")
 
     where_sql = " AND ".join(conditions) if conditions else "1=1"
     query = f"""
@@ -212,7 +231,16 @@ def search_estabelecimentos(
             es.cnpj_ordem, es.cnpj_dv, es.nome_fantasia, es.uf, es.municipio,
             m.descricao AS municipio_nome, es.situacao_cadastral,
             es.cnae_fiscal_principal, c.descricao AS cnae_descricao,
-            es.identificador_matriz_filial
+            es.identificador_matriz_filial,
+            (
+                SELECT string_agg(nome_socio, ', ')
+                FROM (
+                    SELECT nome_socio FROM socios s2
+                    WHERE s2.cnpj_basico = es.cnpj_basico
+                    ORDER BY nome_socio LIMIT 3
+                )
+            ) AS socios_preview,
+            (SELECT count(*) FROM socios s3 WHERE s3.cnpj_basico = es.cnpj_basico) AS socios_total
         FROM estabelecimentos es
         JOIN empresas e ON e.cnpj_basico = es.cnpj_basico
         LEFT JOIN municipios m ON m.codigo = es.municipio

@@ -6,6 +6,8 @@ Rodar com:  streamlit run src/app.py
 
 from __future__ import annotations
 
+import math
+
 import streamlit as st
 import streamlit.components.v1 as components
 
@@ -23,6 +25,8 @@ st.set_page_config(page_title="CNPJ Explorer", page_icon="\U0001F50D", layout="w
 
 if "cnpj_selecionado" not in st.session_state:
     st.session_state.cnpj_selecionado = None
+if "pagina_busca" not in st.session_state:
+    st.session_state.pagina_busca = 1
 
 
 def _situacao_label(codigo: str) -> str:
@@ -43,7 +47,7 @@ except FileNotFoundError as exc:
 st.title("CNPJ Explorer")
 st.caption("Ingestao e consulta dos dados publicos do CNPJ (Receita Federal)")
 
-tab_visao, tab_busca = st.tabs(["Visao geral", "Buscar empresas"])
+tab_busca, tab_visao = st.tabs(["Buscar empresas", "Visao geral"])
 
 # ---------------------------------------------------------------------------
 # Aba 1 - Visao geral
@@ -77,46 +81,59 @@ with tab_visao:
 # ---------------------------------------------------------------------------
 # Aba 2 - Busca
 # ---------------------------------------------------------------------------
+RESULTADOS_POR_PAGINA = 50
+LIMITE_BUSCA = 500
+
 with tab_busca:
-    st.sidebar.header("Filtros")
+    st.subheader("Filtros")
+    col_uf, col_municipio, col_situacao, col_cnae, col_socio = st.columns(5)
 
-    ufs = [""] + db.list_ufs()
-    uf_filtro = st.sidebar.selectbox("UF", ufs, format_func=lambda v: v or "Todas")
+    with col_uf:
+        ufs = [""] + db.list_ufs()
+        uf_filtro = st.selectbox("UF", ufs, format_func=lambda v: v or "Todas")
 
-    municipios_df = db.list_municipios(uf_filtro or None)
-    municipio_opcoes = [("", "Todos")] + list(
-        zip(municipios_df["codigo"], municipios_df["nome"].fillna(municipios_df["codigo"]))
-    )
-    municipio_filtro = st.sidebar.selectbox(
-        "Municipio",
-        options=[c for c, _ in municipio_opcoes],
-        format_func=lambda c: dict(municipio_opcoes).get(c, c),
-    )
+    with col_municipio:
+        municipios_df = db.list_municipios(uf_filtro or None)
+        municipio_opcoes = [("", "Todos")] + list(
+            zip(municipios_df["codigo"], municipios_df["nome"].fillna(municipios_df["codigo"]))
+        )
+        municipio_filtro = st.selectbox(
+            "Municipio",
+            options=[c for c, _ in municipio_opcoes],
+            format_func=lambda c: dict(municipio_opcoes).get(c, c),
+        )
 
-    situacao_opcoes = [("", "Todas")] + list(SITUACAO_CADASTRAL.items())
-    situacao_filtro = st.sidebar.selectbox(
-        "Situacao cadastral",
-        options=[c for c, _ in situacao_opcoes],
-        format_func=lambda c: dict(situacao_opcoes).get(c, c),
-    )
+    with col_situacao:
+        situacao_opcoes = [("", "Todas")] + list(SITUACAO_CADASTRAL.items())
+        situacao_filtro = st.selectbox(
+            "Situacao cadastral",
+            options=[c for c, _ in situacao_opcoes],
+            format_func=lambda c: dict(situacao_opcoes).get(c, c),
+        )
 
-    cnaes_df = db.list_cnaes()
-    cnae_opcoes = [("", "Todos")] + list(zip(cnaes_df["codigo"], cnaes_df["descricao"]))
-    cnae_filtro = st.sidebar.selectbox(
-        "CNAE principal",
-        options=[c for c, _ in cnae_opcoes],
-        format_func=lambda c: dict(cnae_opcoes).get(c, c),
-    )
+    with col_cnae:
+        cnaes_df = db.list_cnaes()
+        cnae_opcoes = [("", "Todos")] + list(zip(cnaes_df["codigo"], cnaes_df["descricao"]))
+        cnae_filtro = st.selectbox(
+            "CNAE principal",
+            options=[c for c, _ in cnae_opcoes],
+            format_func=lambda c: dict(cnae_opcoes).get(c, c),
+        )
+
+    with col_socio:
+        socio_filtro = st.text_input("Socio (nome)", placeholder="Ex: JOAO DA SILVA")
 
     termo = st.text_input(
         "Buscar por razao social, nome fantasia ou CNPJ",
         placeholder="Ex: PADARIA SAO JOSE   ou   12.345.678/0001-90",
     )
 
-    tem_filtro = any([termo.strip(), uf_filtro, municipio_filtro, situacao_filtro, cnae_filtro])
+    tem_filtro = any(
+        [termo.strip(), uf_filtro, municipio_filtro, situacao_filtro, cnae_filtro, socio_filtro.strip()]
+    )
 
     if not tem_filtro:
-        st.info("Digite um termo de busca ou aplique um filtro na barra lateral.")
+        st.info("Digite um termo de busca ou aplique um filtro acima.")
     else:
         resultados = db.search_estabelecimentos(
             termo=termo,
@@ -124,43 +141,61 @@ with tab_busca:
             municipio=municipio_filtro or None,
             situacao=situacao_filtro or None,
             cnae=cnae_filtro or None,
+            socio=socio_filtro or None,
+            limit=LIMITE_BUSCA,
         )
 
         if resultados.empty:
             st.warning("Nenhum resultado encontrado.")
         else:
-            st.write(f"{len(resultados)} resultado(s) (limitado a 200)")
+            filtro_atual = (termo, uf_filtro, municipio_filtro, situacao_filtro, cnae_filtro, socio_filtro)
+            if st.session_state.get("filtro_busca_anterior") != filtro_atual:
+                st.session_state.pagina_busca = 1
+                st.session_state.filtro_busca_anterior = filtro_atual
 
-            opcoes = {}
-            for _, r in resultados.iterrows():
-                cnpj_fmt = db.format_cnpj(r["cnpj_basico"], r["cnpj_ordem"], r["cnpj_dv"])
-                tipo = IDENTIFICADOR_MATRIZ_FILIAL.get(r["identificador_matriz_filial"], "")
-                municipio_nome = db.clean(r["municipio_nome"])
-                uf_nome = db.clean(r["uf"])
-                label = f"{r['razao_social']} — {cnpj_fmt} — {tipo} — {municipio_nome}/{uf_nome}"
-                opcoes[label] = r["cnpj_basico"]
+            total = len(resultados)
+            total_paginas = math.ceil(total / RESULTADOS_POR_PAGINA)
+            pagina = min(st.session_state.get("pagina_busca", 1), total_paginas)
 
-            escolhido = st.selectbox("Selecione uma empresa para ver os detalhes", list(opcoes.keys()))
-            if st.button("Ver detalhes", type="primary"):
-                st.session_state.cnpj_selecionado = opcoes[escolhido]
+            sufixo_limite = f" (limitado a {LIMITE_BUSCA})" if total >= LIMITE_BUSCA else ""
+            st.write(f"{total} resultado(s){sufixo_limite} — pagina {pagina} de {total_paginas}")
 
-            with st.expander("Ver todos os resultados em tabela"):
-                st.dataframe(
-                    resultados[
-                        ["razao_social", "nome_fantasia", "uf", "municipio_nome", "situacao_cadastral", "cnae_descricao"]
-                    ].rename(
-                        columns={
-                            "razao_social": "Razao social",
-                            "nome_fantasia": "Nome fantasia",
-                            "uf": "UF",
-                            "municipio_nome": "Municipio",
-                            "situacao_cadastral": "Situacao",
-                            "cnae_descricao": "CNAE principal",
-                        }
-                    ),
-                    width="stretch",
-                    hide_index=True,
-                )
+            inicio = (pagina - 1) * RESULTADOS_POR_PAGINA
+            pagina_df = resultados.iloc[inicio : inicio + RESULTADOS_POR_PAGINA]
+
+            larguras = [2.6, 1.8, 0.7, 1.7, 1.3, 2.4, 2.2, 1.3]
+            cabecalho = st.columns(larguras)
+            for col, titulo in zip(
+                cabecalho,
+                ["Razao social", "Nome fantasia", "UF", "Municipio", "Situacao", "CNAE principal", "Socios", ""],
+            ):
+                col.markdown(f"**{titulo}**")
+
+            for pos, (idx, r) in enumerate(pagina_df.iterrows()):
+                linha = st.columns(larguras)
+                linha[0].write(r["razao_social"])
+                linha[1].write(db.clean(r["nome_fantasia"]) or "-")
+                linha[2].write(db.clean(r["uf"]) or "-")
+                linha[3].write(db.clean(r["municipio_nome"]) or "-")
+                linha[4].write(_situacao_label(r["situacao_cadastral"]))
+                linha[5].write(db.clean(r["cnae_descricao"]) or db.clean(r["cnae_fiscal_principal"]) or "-")
+                linha[6].write(db.format_socios_preview(r["socios_preview"], r["socios_total"]))
+                chave_botao = f"detalhes_{pagina}_{pos}_{r['cnpj_basico']}_{r['cnpj_ordem']}"
+                if linha[7].button("Ver detalhes", key=chave_botao):
+                    st.session_state.cnpj_selecionado = r["cnpj_basico"]
+
+            if total_paginas > 1:
+                nav_prev, nav_info, nav_next = st.columns([1, 2, 1])
+                with nav_prev:
+                    if st.button("< Anterior", disabled=pagina <= 1):
+                        st.session_state.pagina_busca = pagina - 1
+                        st.rerun()
+                with nav_info:
+                    st.markdown(f"<div style='text-align:center'>Pagina {pagina} de {total_paginas}</div>", unsafe_allow_html=True)
+                with nav_next:
+                    if st.button("Proxima >", disabled=pagina >= total_paginas):
+                        st.session_state.pagina_busca = pagina + 1
+                        st.rerun()
 
     # -----------------------------------------------------------------
     # Detalhe da empresa selecionada
@@ -238,12 +273,30 @@ with tab_busca:
             with sub_rede:
                 st.caption(
                     "Rede formada pela empresa, seus socios diretos e outras empresas onde "
-                    "esses mesmos socios tambem aparecem (ate 15 por socio)."
+                    "esses mesmos socios tambem aparecem (ate 15 por socio). Clique em uma "
+                    "empresa do grafo para abrir a ficha dela."
                 )
                 socios_diretos, outras_empresas = db.get_socio_network(cnpj_basico)
                 if socios_diretos.empty:
                     st.info("Sem socios cadastrados para montar a rede.")
                 else:
+                    # components.html roda num iframe sandboxed sem permissao de navegacao
+                    # (nao da pra fazer window.parent.location = ... dali). Em vez disso, o
+                    # clique num no de empresa do grafo aciona (via JS, acessando o DOM da
+                    # pagina pai - permitido pois o iframe tem allow-same-origin) um botao
+                    # comum do Streamlit correspondente aquela empresa, escondido via CSS.
+                    # Um clique real em <button> passa pelo pipeline normal de eventos do
+                    # React/Streamlit, ao contrario de tentar simular digitação num input.
+                    empresas_no_grafo = {cnpj_basico} | set(outras_empresas["cnpj_basico"].tolist())
+                    with st.container(key="grafo_botoes_ocultos"):
+                        for cnpj_alvo in empresas_no_grafo:
+                            if st.button(f"abrir_empresa_{cnpj_alvo}", key=f"btn_grafo_{cnpj_basico}_{cnpj_alvo}"):
+                                st.session_state.cnpj_selecionado = cnpj_alvo
+                                st.rerun()
+                    st.markdown(
+                        "<style>div.st-key-grafo_botoes_ocultos { display: none; }</style>",
+                        unsafe_allow_html=True,
+                    )
                     html = graph.build_socio_network_html(
                         cnpj_basico, empresa["razao_social"], socios_diretos, outras_empresas
                     )
